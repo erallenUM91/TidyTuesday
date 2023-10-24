@@ -1,0 +1,214 @@
+---
+title: "TaylorSwift"
+author: "Eric Allen"
+date: "10/22/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+
+```
+
+## Loading the data 
+
+Album, Sales, Year 
+
+Need to summarize into total album sales
+
+```{r TaylorData}
+
+tay<- read.csv('/Users/erallen/JHUCourse/taylorswiftspotify.csv')
+dfalbumsales<- read.csv('/Users/erallen/JHUCourse/albumsales.csv')
+#  dfcontpop<- read.csv('/Users/erallen/JHUCourse/population-regions-with-projections.csv')
+
+```
+
+## Data Shaping
+
+1. create genre/album data
+2. Need to merge on genre by album
+3. Need to summarize into total album sales by continent
+4. Compute Z scores - Normalize album poplularity 
+
+- Album, Continent, Sales, ContinentPop, PopNormedSales
+
+Summarize based on continent
+
+- Continent, Sales, ContinentPop, PopNormedSales
+
+
+# 1. Genre data 
+
+```{r Genre}
+
+# Load the tidyverse package (includes tidyr for data reshaping)
+library(tidyverse)
+
+# Original data
+album_data <- data.frame(
+  Album = c("1989", "Evermore", "Fearless", "Folklore", "Lover", "Red", "Reputation", "Speak Now", "Taylor Swift"),
+  Alternative = c(0, 17, 0, 17, 0, 0, 0, 0, 0),
+  Country = c(0, 0, 19, 0, 0, 0, 0, 17, 15),
+  Pop = c(16, 0, 0, 0, 18, 22, 15, 0, 0)
+)
+
+# Reshape the data to have Album and Genre fields, eliminating rows with 0 sales
+reshaped_data <- album_data %>%
+  gather(key = "Genre", value = "Songs", -Album) %>%
+  filter(Songs > 0)  # Filter out rows where sales are 0
+
+# Print the reshaped data
+print(reshaped_data)
+
+
+```
+
+# 2. Merge Genre Data 
+
+```{r Genre Merge}
+
+
+# Merge genre information onto sales_data based on the Album column
+merged_data <- merge(dfalbumsales, reshaped_data, by = "Album", all.x = TRUE)
+
+# Print the merged data
+print(merged_data)
+
+
+
+```
+
+
+# 3. Need to summarize into total album sales by continent
+
+```{r sales by cont}
+
+continent_sales <- merged_data %>%
+  group_by(Album, Continent, Genre) %>%
+  summarize(TotalSales = sum(Sales), .groups = 'drop')
+
+# Print the summary data
+print(continent_sales)
+
+```
+
+
+# 4. **Calculate Z-Scores:**
+
+To determine if certain genres are more popular on certain continents while normalizing the sales data to remove the impact of overall album popularity, you can use a technique called z-score normalization. Z-score normalization, also known as standardization, transforms your data to have a mean of 0 and a standard deviation of 1. This allows you to compare the popularity of genres within each continent without the influence of varying overall album sales.
+
+Here are the steps to do this in R:
+
+First, calculate the mean and standard deviation of album sales for each continent. Then, use these values to calculate the z-scores for the sales data within each continent.
+
+
+```{r z-score}
+
+# Calculate mean and standard deviation of sales for each continent
+continent_stats <- continent_sales %>%
+  group_by(Continent) %>%
+  summarize(mean_sales = mean(TotalSales), sd_sales = sd(TotalSales))
+
+# Merge z-scores back into the original data frame
+normalized_data <- continent_sales %>%
+  left_join(continent_stats, by = "Continent") %>%
+  mutate(z_score = (TotalSales - mean_sales) / sd_sales)
+```
+
+In this code:
+- `mean_sales` and `sd_sales` are the mean and standard deviation of sales for each continent.
+- `z_score` calculates the z-score for each album's sales within its continent.
+
+### 2. **Analyze Normalized Data:**
+
+Now, you can analyze the `z_score` column to compare genre popularity within continents while removing the impact of overall album sales.
+
+```{r AnalyzeNormalizedData}
+# Analyze normalized data
+genre_continent_summary <- normalized_data %>%
+  group_by(Genre, Continent) %>%
+  summarize(mean_z_score = mean(z_score), .groups = 'drop')
+
+# Print the summary
+print(genre_continent_summary)
+```
+
+In this summary, `mean_z_score` represents the average z-score of album sales for each genre within each continent. Positive or negative z-scores indicate sales above or below the continent's mean, respectively, after adjusting for overall album popularity.
+
+By analyzing `mean_z_score`, you can identify which genres are relatively more or less popular within specific continents, considering the impact of overall album sales.
+
+```{r }
+
+# Load necessary libraries
+library(reshape2)
+
+# Melt the data for heatmap
+melted_data <- melt(genre_continent_summary, id.vars = c("Genre", "Continent"))
+
+# Create a heatmap
+ggplot(data = melted_data, aes(x = Genre, y = Continent, fill = value)) +
+  geom_tile() +
+  labs(title = "Z-Score Heatmap by Genre and Continent",
+       x = "Genre",
+       y = "Continent",
+       fill = "Mean Z-Score") +
+  theme_minimal() +
+  scale_fill_viridis_c()
+
+```
+
+```{r world heatmap}
+
+library(leaflet)
+library(htmlwidgets)
+library(maptools) - not available for this verion of R
+library(rgdal) - not available for this version of R
+library(rworldmap)
+
+# Load world map data
+world_map <- getMap()
+
+# Merge z-score data with world map data
+merged_data <- merge(world_map, your_data, by.x = "NAME", by.y = "Continent", all.x = TRUE)
+
+# Create the world map heatmap
+world_map_heatmap <- leaflet(merged_data) %>%
+  setView(lng = 0, lat = 0, zoom = 2) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~colorQuantile("YlOrRd", merged_data$mean_z_score)(mean_z_score),
+              fillOpacity = 0.8,
+              color = "white",
+              weight = 1,
+              smoothFactor = 0.5,
+              label = ~paste(Genre, ": ", mean_z_score)) %>%
+  addLegend(pal = colorQuantile("YlOrRd", merged_data$mean_z_score),
+            values = ~mean_z_score,
+            title = "Mean Z-Score",
+            opacity = 0.7)
+
+# Display the map
+world_map_heatmap
+
+install.packages("tmap")
+install.packages("rworldmap")
+
+library(tmap)
+library(rworldmap)
+
+# Load world map data
+world_map <- getMap()
+
+# Merge z-score data with world map data
+merged_data <- merge(world_map, melted_data, by.x = "NAME", by.y = "Continent", all.x = TRUE)
+
+# Plot the world map heatmap
+tm_shape(merged_data) +
+  tm_fill(col = "mean_z_score", style = "cont", palette = "YlOrRd", title = "Mean Z-Score") +
+  tm_borders() +
+  tm_layout(title = "World Map Heatmap by Genre and Continent")
+
+
+```
